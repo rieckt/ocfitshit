@@ -1,0 +1,439 @@
+---
+description: OCFitShit - Internal Fitness Competition Tracker
+globs: ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]
+alwaysApply: true
+---
+
+# OCFitShit - Internal Fitness Competition Tracker
+
+## Project Overview
+
+OCFitShit is an internal web application designed to track and organize company fitness competitions. The platform uses gamification elements like levels and badges to motivate employees to achieve their fitness goals.
+
+## Tech Stack
+
+- **Frontend**: Next.js 15+, React 19, Tailwind CSS 4
+- **UI Components**: ShadCN UI
+- **Authentication**: Clerk
+- **Database**: PostgreSQL
+- **ORM**: Drizzle
+- **API**: tRPC
+- **Styling**: Tailwind CSS with animations (tw-animate-css)
+- **Code Quality**: Biome
+
+## Architecture Guidelines
+
+### Directory Structure
+
+- `/src/app` - Next.js App Router pages and layouts
+- `/src/components` - Reusable UI components
+  - `/src/components/ui` - Base UI components from ShadCN
+  - `/src/components/auth` - Authentication-related components
+  - `/src/components/dashboard` - Dashboard-specific components
+  - `/src/components/competition` - Competition-related components
+- `/src/lib` - Utility functions and shared code
+- `/src/server` - Server-side code
+  - `/src/server/db` - Database schema and queries
+  - `/src/server/api` - tRPC API routes
+- `/src/types` - TypeScript type definitions
+
+### Component Structure
+
+- Use functional components with TypeScript
+- Implement proper prop typing for all components
+- Utilize React hooks for state management
+- Follow the container/presentational pattern where appropriate
+
+## Code Style and Conventions
+
+### TypeScript
+
+- Use TypeScript for all new code
+- Define interfaces for all props and state
+- Avoid using `any` type
+- Use type inference where possible
+- Prefer `interface` for public APIs and `type` for complex types
+
+```typescript
+// Example component with proper typing
+interface UserCardProps {
+  user: {
+    id: string;
+    name: string;
+    level: number;
+    points: number;
+    badges: string[];
+  };
+  onLevelUp?: (userId: string) => void;
+}
+
+export function UserCard({ user, onLevelUp }: UserCardProps) {
+  // Component implementation
+}
+```
+
+### React and Next.js
+
+- Use the App Router for all new pages
+- Implement server components where appropriate
+- Use client components only when necessary (interactivity, hooks)
+- Implement proper error boundaries
+- Use Next.js Image component for optimized images
+
+```typescript
+// Example page component
+export default function DashboardPage() {
+  return (
+    <main className="container mx-auto py-8">
+      <h1 className="text-3xl font-bold mb-6">Fitness Dashboard</h1>
+      <UserStats />
+      <CompetitionRankings />
+    </main>
+  );
+}
+```
+
+### Styling
+
+- Use Tailwind CSS for styling
+- Follow utility-first approach
+- Create custom components for repeated patterns
+- Use the `cn` utility for conditional class names
+- Implement responsive design for all components
+
+```typescript
+// Example of proper styling
+import { cn } from "@/lib/utils";
+
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: "default" | "outline" | "ghost";
+  size?: "sm" | "md" | "lg";
+}
+
+export function Button({
+  variant = "default",
+  size = "md",
+  className,
+  ...props
+}: ButtonProps) {
+  return (
+    <button
+      className={cn(
+        "rounded-md font-medium transition-colors",
+        {
+          "bg-primary text-white hover:bg-primary/90": variant === "default",
+          "border border-gray-300 hover:bg-gray-50": variant === "outline",
+          "hover:bg-gray-100": variant === "ghost",
+        },
+        {
+          "px-3 py-1 text-sm": size === "sm",
+          "px-4 py-2": size === "md",
+          "px-6 py-3 text-lg": size === "lg",
+        },
+        className
+      )}
+      {...props}
+    />
+  );
+}
+```
+
+## Feature Implementation Guidelines
+
+### Authentication with Clerk
+
+- Implement Clerk for all authentication flows
+- Use Clerk's middleware for protected routes
+- Store additional user metadata in your database
+- Link Clerk user IDs with your application's user records
+
+```typescript
+// Example Clerk implementation in layout
+import { ClerkProvider } from "@clerk/nextjs";
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <ClerkProvider>
+      <html lang="en">
+        <body>{children}</body>
+      </html>
+    </ClerkProvider>
+  );
+}
+```
+
+### Database and ORM
+
+- Use Drizzle ORM for all database operations
+- Define clear schema with proper relations
+- Implement migrations for schema changes
+- Use transactions for operations that modify multiple tables
+
+```typescript
+// Example schema definition
+import { pgTable, serial, text, integer, timestamp } from "drizzle-orm/pg-core";
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  clerkId: text("clerk_id").notNull().unique(),
+  name: text("name").notNull(),
+  level: integer("level").notNull().default(1),
+  points: integer("points").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const badges = pgTable("badges", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  imageUrl: text("image_url").notNull(),
+});
+
+export const userBadges = pgTable("user_badges", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .references(() => users.id)
+    .notNull(),
+  badgeId: integer("badge_id")
+    .references(() => badges.id)
+    .notNull(),
+  earnedAt: timestamp("earned_at").defaultNow(),
+});
+```
+
+### API with tRPC
+
+- Implement tRPC for type-safe API routes
+- Define clear router structure based on features
+- Implement proper input validation
+- Use middleware for authentication and logging
+
+```typescript
+// Example tRPC router
+import { router, publicProcedure, protectedProcedure } from "../trpc";
+import { z } from "zod";
+
+export const userRouter = router({
+  getProfile: protectedProcedure.query(async ({ ctx }) => {
+    const { userId } = ctx;
+    return await db.query.users.findFirst({
+      where: eq(users.clerkId, userId),
+      with: {
+        badges: true,
+      },
+    });
+  }),
+
+  updatePoints: protectedProcedure
+    .input(z.object({
+      points: z.number().positive(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { userId } = ctx;
+      const { points } = input;
+
+      return await db.transaction(async (tx) => {
+        const user = await tx.query.users.findFirst({
+          where: eq(users.clerkId, userId),
+        });
+
+        if (!user) throw new Error("User not found");
+
+        const newPoints = user.points + points;
+        const newLevel = Math.floor(newPoints / 100) + 1;
+
+        return await tx.update(users)
+          .set({
+            points: newPoints,
+            level: newLevel,
+            updatedAt: new Date(),
+          })
+          .where(eq(users.clerkId, userId))
+          .returning();
+      });
+    }),
+});
+```
+
+### UI Components with ShadCN UI
+
+- Use ShadCN UI components as the foundation
+- Customize components to match the application's design
+- Create composite components for common patterns
+- Implement proper accessibility attributes
+
+```typescript
+// Example of a custom ShadCN UI component
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+
+interface UserStatsCardProps {
+  name: string;
+  level: number;
+  points: number;
+  nextLevelPoints: number;
+  badges: Array<{ id: string; name: string }>;
+}
+
+export function UserStatsCard({
+  name,
+  level,
+  points,
+  nextLevelPoints,
+  badges,
+}: UserStatsCardProps) {
+  const progress = (points / nextLevelPoints) * 100;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{name}</CardTitle>
+        <CardDescription>Level {level} Fitness Enthusiast</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-4">
+          <div>
+            <div className="flex justify-between mb-1">
+              <span className="text-sm font-medium">Progress to Level {level + 1}</span>
+              <span className="text-sm font-medium">{points}/{nextLevelPoints}</span>
+            </div>
+            <Progress value={progress} />
+          </div>
+          <div>
+            <h4 className="text-sm font-medium mb-2">Badges</h4>
+            <div className="flex flex-wrap gap-2">
+              {badges.map((badge) => (
+                <Badge key={badge.id} variant="secondary">
+                  {badge.name}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+      <CardFooter>
+        <p className="text-sm text-muted-foreground">
+          Keep going! You're doing great!
+        </p>
+      </CardFooter>
+    </Card>
+  );
+}
+```
+
+## Gamification Implementation
+
+- Implement a level system based on points
+- Create badges for achievements
+- Design leaderboards for competitions
+- Use animations for level-ups and badge awards
+
+```typescript
+// Example level calculation
+function calculateLevel(points: number): number {
+  return Math.floor(points / 100) + 1;
+}
+
+// Example points needed for next level
+function pointsForNextLevel(level: number): number {
+  return level * 100;
+}
+```
+
+## Data Visualization
+
+- Use Chart.js for data visualization
+- Implement responsive charts
+- Provide filtering options for data
+- Show progress over time
+
+```typescript
+// Example Chart.js implementation
+import { Line } from "react-chartjs-2";
+
+interface ProgressChartProps {
+  data: {
+    dates: string[];
+    points: number[];
+  };
+}
+
+export function ProgressChart({ data }: ProgressChartProps) {
+  const chartData = {
+    labels: data.dates,
+    datasets: [
+      {
+        label: "Points",
+        data: data.points,
+        borderColor: "rgb(99, 102, 241)",
+        backgroundColor: "rgba(99, 102, 241, 0.1)",
+        fill: true,
+      },
+    ],
+  };
+
+  return (
+    <div className="w-full h-64">
+      <Line
+        data={chartData}
+        options={{
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              beginAtZero: true,
+            },
+          },
+        }}
+      />
+    </div>
+  );
+}
+```
+
+## Testing and Quality Assurance
+
+- Write unit tests for utility functions
+- Implement component tests for UI components
+- Use integration tests for critical user flows
+- Ensure accessibility compliance
+
+## Performance Considerations
+
+- Implement proper data fetching strategies
+- Use React.memo for expensive components
+- Optimize images and assets
+- Implement proper caching strategies
+
+## Deployment
+
+- Use Vercel for deployment
+- Set up proper environment variables
+- Implement CI/CD pipeline
+- Monitor performance and errors
+
+## Resources
+
+- [Next.js Documentation](mdc:https:/nextjs.org/docs)
+- [React Documentation](mdc:https:/react.dev)
+- [Tailwind CSS Documentation](mdc:https:/tailwindcss.com/docs)
+- [ShadCN UI Documentation](mdc:https:/ui.shadcn.com)
+- [Clerk Documentation](mdc:https:/clerk.com/docs)
+- [Drizzle ORM Documentation](mdc:https:/orm.drizzle.team/docs/overview)
+- @tRPC Documentation
+
+## Run
+run bun not npm
