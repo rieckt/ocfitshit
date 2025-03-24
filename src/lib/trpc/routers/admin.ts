@@ -1,5 +1,8 @@
+import db from "@/db";
+import { exerciseTypes, exercises } from "@/db/schema";
 import { clerkClient } from "@clerk/nextjs/server";
 import { TRPCError } from "@trpc/server";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { adminProcedure } from "../procedures";
 import { router } from "../server";
@@ -83,6 +86,109 @@ export const adminRouter = router({
 				throw new TRPCError({
 					code: "INTERNAL_SERVER_ERROR",
 					message: "Failed to set admin role. Please try again or contact support.",
+				});
+			}
+		}),
+
+	createExerciseType: adminProcedure
+		.input(
+			z.object({
+				name: z.string().min(1, "Exercise name is required"),
+				unit: z.string().min(1, "Unit is required"),
+			}),
+		)
+		.mutation(async ({ input }) => {
+			try {
+				const { name, unit } = input;
+
+				// Insert the new exercise type
+				const [newExerciseType] = await db
+					.insert(exerciseTypes)
+					.values({
+						name,
+						unit,
+					})
+					.returning();
+
+				return newExerciseType;
+			} catch (error) {
+				console.error("Error creating exercise type:", error);
+				throw new TRPCError({
+					code: "INTERNAL_SERVER_ERROR",
+					message: "Failed to create exercise type",
+				});
+			}
+		}),
+
+	// Get all exercise types
+	getExerciseTypes: adminProcedure.query(async () => {
+		try {
+			const types = await db.select().from(exerciseTypes);
+			return types;
+		} catch (error) {
+			console.error("Error fetching exercise types:", error);
+			throw new TRPCError({
+				code: "INTERNAL_SERVER_ERROR",
+				message: "Failed to fetch exercise types",
+			});
+		}
+	}),
+
+	deleteExerciseType: adminProcedure
+		.input(
+			z.object({
+				id: z.number({
+					required_error: "Exercise type ID is required",
+					invalid_type_error: "Exercise type ID must be a number",
+				}),
+			}),
+		)
+		.mutation(async ({ input }) => {
+			const { id } = input;
+
+			try {
+				// First check if the exercise type exists
+				const existingType = await db.query.exerciseTypes.findFirst({
+					where: eq(exerciseTypes.id, id),
+				});
+
+				if (!existingType) {
+					throw new TRPCError({
+						code: "NOT_FOUND",
+						message: "Exercise type not found",
+					});
+				}
+
+				// Delete all exercises of this type first
+				await db.delete(exercises)
+					.where(eq(exercises.exerciseTypeId, id));
+
+				// Then delete the exercise type
+				const [deletedType] = await db.delete(exerciseTypes)
+					.where(eq(exerciseTypes.id, id))
+					.returning();
+
+				if (!deletedType) {
+					throw new TRPCError({
+						code: "INTERNAL_SERVER_ERROR",
+						message: "Failed to delete exercise type",
+					});
+				}
+
+				return deletedType;
+			} catch (error) {
+				// If it's already a TRPCError, rethrow it
+				if (error instanceof TRPCError) {
+					throw error;
+				}
+
+				// Log the actual error for debugging
+				console.error("Error deleting exercise type:", error);
+
+				// Return a safe error message to the client
+				throw new TRPCError({
+					code: "INTERNAL_SERVER_ERROR",
+					message: "Failed to delete exercise type. Please try again later.",
 				});
 			}
 		}),
