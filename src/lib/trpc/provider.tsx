@@ -7,45 +7,39 @@ import superjson from "superjson";
 import { trpc } from "./client";
 
 export function TRPCProvider({ children }: { children: React.ReactNode }) {
-	const [queryClient] = useState(
-		() =>
-			new QueryClient({
-				defaultOptions: {
-					queries: {
-						staleTime: 5 * 1000, // 5 seconds
-						retry: 1,
-						refetchOnWindowFocus: false,
-					},
-				},
-			})
-	);
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 5 * 1000,
+        retry: 1,
+        refetchOnWindowFocus: false,
+        gcTime: 10 * 60 * 1000,
+      },
+    },
+  }));
 
-	const [trpcClient] = useState(() =>
-		trpc.createClient({
-			links: [
-				// Adds pretty logs to your console in development
-				loggerLink({
-					enabled: (opts) =>
-						process.env.NODE_ENV === "development" ||
-						(opts.direction === "down" && opts.result instanceof Error),
-				}),
-				httpBatchLink({
-					url: "/api/trpc",
-					transformer: superjson,
-					// Add custom headers here if needed
-					headers() {
-						return {
-							// Example: authorization: getAuthCookie(),
-						};
-					},
-				}),
-			],
-		})
-	);
+  const [trpcClient] = useState(() => trpc.createClient({
+    links: [
+      loggerLink({
+        enabled: (opts) =>
+          process.env.NODE_ENV === "development" ||
+          (opts.direction === "down" && opts.result instanceof Error),
+      }),
+      httpBatchLink({
+        url: "/api/trpc",
+        transformer: superjson,
+        headers() {
+          return {
+            "x-trpc-source": "react",
+          };
+        },
+      }),
+    ],
+  }));
 
-	return (
-		<trpc.Provider client={trpcClient} queryClient={queryClient}>
-			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-		</trpc.Provider>
-	);
+  return (
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    </trpc.Provider>
+  );
 }

@@ -16,40 +16,59 @@ export default function AdminAccessCheck({ children }: AdminAccessCheckProps) {
   const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+
     const checkAdminStatus = async () => {
       if (!isLoaded) return;
 
       if (!userId || !sessionId) {
-        toast.error("You need to be logged in to access the admin area");
+        if (isMounted) {
+          setIsChecking(false);
+          toast.error("You need to be logged in to access the admin area");
+        }
         router.push("/login");
         return;
       }
 
       try {
-        // Fetch the current user's admin status
-        const response = await fetch("/api/check-admin");
-        const data = await response.json();
+        const response = await fetch("/api/check-admin", {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          credentials: "include",
+        });
 
         if (!response.ok) {
-          throw new Error(data.error || "Failed to check admin status");
+          throw new Error("Failed to check admin status");
         }
 
-        setIsAdmin(data.isAdmin);
+        const data = await response.json();
 
-        if (!data.isAdmin) {
-          toast.error("You don't have permission to access the admin area");
-          router.push("/dashboard");
+        if (isMounted) {
+          setIsAdmin(data.isAdmin);
+          if (!data.isAdmin) {
+            toast.error("You don't have permission to access the admin area");
+            router.push("/dashboard");
+          }
         }
       } catch (error) {
         console.error("Error checking admin status:", error);
-        toast.error("Something went wrong checking your permissions");
+        if (isMounted) {
+          toast.error("Something went wrong checking your permissions");
+        }
         router.push("/dashboard");
       } finally {
-        setIsChecking(false);
+        if (isMounted) {
+          setIsChecking(false);
+        }
       }
     };
 
     checkAdminStatus();
+
+    return () => {
+      isMounted = false;
+    };
   }, [isLoaded, userId, sessionId, router]);
 
   if (isChecking) {
@@ -63,6 +82,5 @@ export default function AdminAccessCheck({ children }: AdminAccessCheckProps) {
     );
   }
 
-  // Only render children if admin
   return isAdmin ? <>{children}</> : null;
 }

@@ -1,13 +1,18 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { NavigationMenu, NavigationMenuItem, NavigationMenuLink, NavigationMenuList, navigationMenuTriggerStyle } from "@/components/ui/navigation-menu";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SignInButton, SignOutButton, useAuth, useUser } from "@clerk/nextjs";
-import { Menu } from "lucide-react";
+import { ChevronDown, Dumbbell, LogOut, Settings, Shield, User } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { toast } from "sonner";
 
 export default function Navigation() {
 	const { userId, isLoaded } = useAuth();
@@ -15,155 +20,170 @@ export default function Navigation() {
 	const pathname = usePathname();
 
 	// Function to determine if a link is active
-	const isActive = (path: string) => {
-		return pathname === path;
-	};
+	const isActive = (path: string) => pathname === path;
 
 	// Check if user is admin
 	const isAdmin = user?.publicMetadata?.role === "admin";
 
-	// Handle secure navigation with permission checks
-	const handleNavigation = (href: string, requiresAdmin = false) => {
-		// If requires admin and user is not admin
-		if (requiresAdmin && !isAdmin) {
-			toast.error("You don't have permission to access the admin area");
-			return false;
-		}
-
-		return true;
-	};
-
 	// Navigation links array to use in both desktop and mobile nav
 	const navLinks = [
-		{ href: "/", label: "Home", requireAuth: false, requireAdmin: false },
-		{ href: "/dashboard", label: "Dashboard", requireAuth: true, requireAdmin: false },
-		{ href: "/admin", label: "Admin", requireAuth: true, requireAdmin: true },
+		{
+			href: "/",
+			label: "Home",
+			requireAuth: false,
+			requireAdmin: false,
+			description: "Return to homepage"
+		},
+		{
+			href: "/dashboard",
+			label: "Dashboard",
+			requireAuth: true,
+			requireAdmin: false,
+			description: "View your fitness progress"
+		},
 	];
 
 	return (
-		<>
-			<header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-				<div className="flex h-16 items-center justify-between px-4">
-					<div className="flex items-center gap-6">
-						<Link href="/" className="font-bold text-xl">
-							OCFitShit
-						</Link>
-
-						{/* Desktop Navigation */}
-						<NavigationMenu className="hidden md:flex">
-							<NavigationMenuList>
-								{navLinks.map((link) => {
-									// Only show if not requiring auth or user is logged in
-									if (!link.requireAuth || userId) {
-										// Hide admin links for non-admins
-										if (link.requireAdmin && !isAdmin) {
-											return null;
-										}
-
-										return (
-											<NavigationMenuItem key={link.href}>
-												<Link
-													href={link.href}
-													legacyBehavior
-													passHref
-													onClick={(e) => {
-														if (!handleNavigation(link.href, link.requireAdmin)) {
-															e.preventDefault();
-														}
-													}}
-												>
-													<NavigationMenuLink className={navigationMenuTriggerStyle()}>
-														{link.label}
-													</NavigationMenuLink>
-												</Link>
-											</NavigationMenuItem>
-										);
-									}
-									return null;
-								})}
-							</NavigationMenuList>
-						</NavigationMenu>
-
-						{/* Mobile Navigation */}
-						<div className="md:hidden">
-							<Sheet>
-								<SheetTrigger asChild>
-									<Button variant="ghost" size="icon" className="h-10 w-10">
-										<Menu className="h-5 w-5" />
-										<span className="sr-only">Toggle menu</span>
-									</Button>
-								</SheetTrigger>
-								<SheetContent side="left">
-									<div className="px-2 py-6 flex flex-col gap-4">
-										<Link href="/" className="font-bold text-xl px-2">
-											OCFitShit
-										</Link>
-										<div className="flex flex-col gap-2">
-											{navLinks.map((link) => {
-												// Only show if not requiring auth or user is logged in
-												if (!link.requireAuth || userId) {
-													// Hide admin links for non-admins
-													if (link.requireAdmin && !isAdmin) {
-														return null;
-													}
-
-													return (
-														<Link
-															key={link.href}
-															href={link.href}
-															className={`px-2 py-1 rounded-md ${
-																isActive(link.href)
-																	? "bg-accent text-accent-foreground"
-																	: "hover:bg-accent/50"
-															}`}
-															onClick={(e) => {
-																if (!handleNavigation(link.href, link.requireAdmin)) {
-																	e.preventDefault();
-																}
-															}}
-														>
-															{link.label}
-														</Link>
-													);
-												}
-												return null;
-											})}
-										</div>
-									</div>
-								</SheetContent>
-							</Sheet>
+		<header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60">
+			<nav className="container mx-auto flex h-16 items-center justify-between px-4">
+				<div className="flex items-center gap-6">
+					<Link href="/" className="flex items-center gap-3 transition-transform hover:scale-105">
+						<div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+							<Dumbbell className="h-5 w-5 text-primary" />
 						</div>
-					</div>
+						<span className="bg-gradient-to-r from-primary to-primary/50 bg-clip-text text-xl font-bold text-transparent">
+							OCFitShit
+						</span>
+					</Link>
 
-					<div className="flex items-center gap-2">
-						{!isLoaded ? (
-							// Show loading state
-							<div className="h-9 w-24 animate-pulse rounded bg-muted" />
-						) : userId ? (
-							// User is signed in
-							<SignOutButton>
-								<Button variant="destructive">
-									Sign Out
-								</Button>
-							</SignOutButton>
-						) : (
-							// User is not signed in
-							<>
-								<SignInButton mode="modal">
-									<Button>
-										Sign In
+					{/* Desktop Navigation */}
+					<div className="hidden md:flex md:gap-1">
+						{navLinks.map((link) => {
+							// Only show if not requiring auth or user is logged in
+							if (!link.requireAuth || userId) {
+								// Hide admin links for non-admins
+								if (link.requireAdmin && !isAdmin) return null;
+
+								const active = isActive(link.href);
+								return (
+									<Button
+										key={link.href}
+										variant={active ? "secondary" : "ghost"}
+										className={`relative h-9 px-4 text-sm transition-all hover:scale-105 ${
+											active ? "bg-primary/10 text-primary hover:bg-primary/15" : ""
+										}`}
+										asChild
+									>
+										<Link href={link.href}>
+											<span>{link.label}</span>
+											{active && (
+												<div className="absolute bottom-0 left-0 h-0.5 w-full bg-primary" />
+											)}
+										</Link>
 									</Button>
-								</SignInButton>
-								<Button variant="outline" asChild>
-									<Link href="/register">
-										Register
-									</Link>
-								</Button>
-							</>
-						)}
+								);
+							}
+							return null;
+						})}
 					</div>
 				</div>
-			</header>
-		</>
+
+				<div className="flex items-center gap-2">
+					{!isLoaded ? (
+						// Show loading state
+						<div className="h-9 w-24 animate-pulse rounded-lg bg-muted" />
+					) : userId ? (
+						// User is signed in
+						<div className="flex items-center gap-2">
+							{isAdmin && (
+								<Button
+									variant={pathname.startsWith("/admin") ? "secondary" : "ghost"}
+									size="sm"
+									className={`gap-2 transition-all hover:scale-105 ${
+										pathname.startsWith("/admin") ? "bg-primary/10 text-primary hover:bg-primary/15" : ""
+									}`}
+									asChild
+								>
+									<Link href="/admin">
+										<Shield className="h-4 w-4" />
+										Admin
+									</Link>
+								</Button>
+							)}
+							<DropdownMenu>
+								<DropdownMenuTrigger asChild>
+									<Button
+										variant="ghost"
+										size="sm"
+										className="gap-2 transition-all hover:scale-105"
+									>
+										<div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10">
+											<User className="h-4 w-4 text-primary" />
+										</div>
+										<span className="font-medium">{user?.firstName}</span>
+										<ChevronDown className="h-3 w-3 opacity-50" />
+									</Button>
+								</DropdownMenuTrigger>
+								<DropdownMenuContent
+									align="end"
+									className="w-56 animate-in fade-in-0 zoom-in-95"
+								>
+									<DropdownMenuLabel className="font-normal">
+										<div className="flex flex-col space-y-1">
+											<p className="text-sm font-medium leading-none">{user?.firstName} {user?.lastName}</p>
+											<p className="text-xs leading-none text-muted-foreground">{user?.emailAddresses[0].emailAddress}</p>
+										</div>
+									</DropdownMenuLabel>
+									<DropdownMenuSeparator />
+									<DropdownMenuItem asChild>
+										<Link href="/settings" className="flex w-full cursor-pointer items-center">
+											<Settings className="mr-2 h-4 w-4 text-muted-foreground" />
+											Settings
+										</Link>
+									</DropdownMenuItem>
+									<DropdownMenuItem
+										asChild
+										className="text-red-600 focus:bg-red-50 focus:text-red-600 dark:focus:bg-red-950"
+									>
+										<SignOutButton>
+											<button className="flex w-full items-center">
+												<LogOut className="mr-2 h-4 w-4" />
+												Sign Out
+											</button>
+										</SignOutButton>
+									</DropdownMenuItem>
+								</DropdownMenuContent>
+							</DropdownMenu>
+						</div>
+					) : (
+						// User is not signed in
+						<div className="flex items-center gap-2">
+							<SignInButton mode="modal">
+								<Button
+									size="sm"
+									variant="ghost"
+									className="transition-all hover:scale-105 hover:bg-primary/10 hover:text-primary"
+								>
+									Sign In
+								</Button>
+							</SignInButton>
+							<Button
+								variant="default"
+								size="sm"
+								className="transition-all hover:scale-105"
+								asChild
+							>
+								<Link href="/register">Register</Link>
+							</Button>
+						</div>
+					)}
+				</div>
+			</nav>
+		</header>
 	);
 }
+
+// Helper function to conditionally join class names
+const cn = (...classes: (string | boolean | undefined)[]) => {
+	return classes.filter(Boolean).join(" ");
+};

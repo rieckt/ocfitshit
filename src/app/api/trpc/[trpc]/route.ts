@@ -16,14 +16,22 @@ const handler = async (req: Request, context: { params: { trpc: string } }) => {
 					? ({ path, error }: { path?: string; error: TRPCError }) => {
 							console.error(
 								`❌ tRPC failed on ${path ?? "<no-path>"}: ${error.message}`,
-								{ error }
+								{
+									error,
+									code: error.code,
+									data: error.data,
+									path,
+									type: error.name,
+									cause: error.cause,
+								}
 							);
 					  }
 					: ({ path, error }: { path?: string; error: TRPCError }) => {
-							// In production, you might want to log to an error reporting service
 							console.error(`tRPC error on ${path ?? "<no-path>"}`, {
 								code: error.code,
 								message: error.message,
+								type: error.name,
+								path,
 							});
 					  },
 		});

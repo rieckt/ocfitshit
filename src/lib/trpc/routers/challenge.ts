@@ -1,134 +1,240 @@
 import db from "@/db";
-import { challenges, exercises, userProfiles } from "@/db/schema";
+import {
+    challenges,
+    leaderboards,
+    seasons
+} from "@/db/schema";
+import { TRPCError } from "@trpc/server";
 import { and, eq, gte, lte } from "drizzle-orm";
 import { z } from "zod";
-import { adminProcedure, protectedProcedure, publicProcedure } from "../procedures";
+import { adminProcedure, publicProcedure } from "../procedures";
 import { router } from "../server";
 
 export const challengeRouter = router({
-	// Public procedure - list active challenges
-	listActive: publicProcedure
-		.query(async () => {
-			const now = new Date();
+  // Public procedure - list active challenges with season info
+  listActive: publicProcedure.query(async () => {
+    const now = new Date();
 
-			const activeChalllenges = await db.query.challenges.findMany({
-				where: and(
-					lte(challenges.startsAt, now),
-					gte(challenges.endsAt, now)
-				),
-				orderBy: (challenges, { asc }) => [asc(challenges.endsAt)],
-			});
+    const activeChallenges = await db.query.challenges.findMany({
+      where: and(lte(challenges.startsAt, now), gte(challenges.endsAt, now)),
+      orderBy: (challenges, { asc }) => [asc(challenges.endsAt)],
+      with: {
+        season: true,
+      },
+    });
 
-			return activeChalllenges;
-		}),
+    return activeChallenges;
+  }),
 
-	// Public procedure - get challenge by ID
-	getById: publicProcedure
-		.input(z.object({ id: z.string().uuid() }))
-		.query(async ({ input }) => {
-			const { id } = input;
+  // Public procedure - get challenge by ID with full details
+  getById: publicProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .query(async ({ input }) => {
+      const { id } = input;
 
-			const challenge = await db.query.challenges.findFirst({
-				where: eq(challenges.id, id),
-			});
+      const challenge = await db.query.challenges.findFirst({
+        where: eq(challenges.id, id),
+        with: {
+          season: true,
+          exerciseLogs: {
+            with: {
+              user: true,
+              exercise: {
+                with: {
+                  difficulty: true,
+                  categories: {
+                    with: {
+                      category: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
 
-			return challenge;
-		}),
+      if (!challenge) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Challenge not found",
+        });
+      }
 
-	// Protected procedure - log exercise for a challenge
-	logExercise: protectedProcedure
-		.input(z.object({
-			challengeId: z.string().uuid(),
-			exerciseTypeId: z.number(),
-			value: z.number().positive(),
-			metadata: z.record(z.unknown()).optional(),
-		}))
-		.mutation(async ({ ctx, input }) => {
-			const { userId } = ctx;
-			const { challengeId, exerciseTypeId, value, metadata } = input;
+      return challenge;
+    }),
 
-			// Check if challenge exists and is active
-			const challenge = await db.query.challenges.findFirst({
-				where: eq(challenges.id, challengeId),
-			});
+  // Public procedure - get challenge leaderboard
+  getLeaderboard: publicProcedure
+    .input(
+      z.object({
+        id: z.string().uuid(),
+        limit: z.number().min(1).max(100).default(10),
+        cursor: z.number().optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const { id, limit, cursor } = input;
 
-			if (!challenge) {
-				throw new Error("Challenge not found");
-			}
+      const leaderboardEntries = await db.query.leaderboards.findMany({
+        where: eq(leaderboards.challengeId, id),
+        limit: limit + 1,
+        offset: cursor,
+        orderBy: (leaderboards, { desc }) => [desc(leaderboards.points)],
+        with: {
+          user: true,
+        },
+      });
 
-			const now = new Date();
-			if (challenge.startsAt && challenge.endsAt && (challenge.startsAt > now || challenge.endsAt < now)) {
-				throw new Error("Challenge is not active");
-			}
+      let nextCursor: typeof cursor | undefined = undefined;
+      if (leaderboardEntries.length > limit) {
+        const nextItem = leaderboardEntries.pop();
+        nextCursor = cursor ? cursor + limit : limit;
+      }
 
-			// Calculate points (example: 1 point per unit of exercise)
-			const points = value;
+      return {
+        items: leaderboardEntries,
+        nextCursor,
+      };
+    }),
 
-			// Insert exercise record
-			const [exercise] = await db
-				.insert(exercises)
-				.values({
-					userId,
-					challengeId,
-					exerciseTypeId,
-					value,
-					points,
-					metadata: metadata || {},
-				})
-				.returning();
+  // Admin procedure - create a new challenge
+  create: adminProcedure
+    .input(
+      z.object({
+        seasonId: z.string().uuid(),
+        name: z.string().min(1, "Challenge name is required"),
+        description: z.string(),
+        startsAt: z.date(),
+        endsAt: z.date(),
+        isTeamBased: z.boolean().default(false),
+        pointsMultiplier: z.number().positive().default(1),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const {
+        seasonId,
+        name,
+        description,
+        startsAt,
+        endsAt,
+        isTeamBased,
+        pointsMultiplier,
+      } = input;
 
-			// Update user's total points
-			const userProfile = await db.query.userProfiles.findFirst({
-				where: eq(userProfiles.userId, userId),
-			});
+      // Validate dates
+      if (startsAt >= endsAt) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Start date must be before end date",
+        });
+      }
 
-			if (userProfile) {
-				const newTotalPoints = (userProfile.totalPoints || 0) + points;
-				const newLevel = Math.floor(newTotalPoints / 100) + 1;
+      // Check if season exists
+      const season = await db.query.seasons.findFirst({
+        where: eq(seasons.id, seasonId),
+      });
 
-				await db
-					.update(userProfiles)
-					.set({
-						totalPoints: newTotalPoints,
-						level: newLevel,
-					})
-					.where(eq(userProfiles.userId, userId));
-			}
+      if (!season) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Season not found",
+        });
+      }
 
-			return { success: true, exercise };
-		}),
+      // Create new challenge
+      const [challenge] = await db
+        .insert(challenges)
+        .values({
+          seasonId,
+          name,
+          description,
+          startsAt,
+          endsAt,
+          isTeamBased,
+          pointsMultiplier,
+        })
+        .returning();
 
-	// Admin procedure - create a new challenge
-	create: adminProcedure
-		.input(z.object({
-			seasonId: z.string().uuid(),
-			name: z.string(),
-			description: z.string(),
-			startsAt: z.date(),
-			endsAt: z.date(),
-			isTeamBased: z.boolean().default(false),
-		}))
-		.mutation(async ({ input }) => {
-			const { seasonId, name, description, startsAt, endsAt, isTeamBased } = input;
+      return challenge;
+    }),
 
-			// Validate dates
-			if (startsAt >= endsAt) {
-				throw new Error("Start date must be before end date");
-			}
+  // Admin procedure - update challenge
+  update: adminProcedure
+    .input(
+      z.object({
+        id: z.string().uuid(),
+        name: z.string().min(1, "Challenge name is required").optional(),
+        description: z.string().optional(),
+        startsAt: z.date().optional(),
+        endsAt: z.date().optional(),
+        isTeamBased: z.boolean().optional(),
+        pointsMultiplier: z.number().positive().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { id, ...updateData } = input;
 
-			// Create new challenge
-			const [challenge] = await db
-				.insert(challenges)
-				.values({
-					seasonId,
-					name,
-					description,
-					startsAt,
-					endsAt,
-					isTeamBased,
-				})
-				.returning();
+      // Check if challenge exists
+      const existingChallenge = await db.query.challenges.findFirst({
+        where: eq(challenges.id, id),
+      });
 
-			return { success: true, challenge };
-		}),
+      if (!existingChallenge) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Challenge not found",
+        });
+      }
+
+      // Validate dates if provided
+      if (updateData.startsAt && updateData.endsAt) {
+        if (updateData.startsAt >= updateData.endsAt) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Start date must be before end date",
+          });
+        }
+      } else if (updateData.startsAt && existingChallenge.endsAt && updateData.startsAt >= existingChallenge.endsAt) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Start date must be before end date",
+        });
+      } else if (updateData.endsAt && existingChallenge.startsAt && existingChallenge.startsAt >= updateData.endsAt) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Start date must be before end date",
+        });
+      }
+
+      // Update challenge
+      const [updatedChallenge] = await db
+        .update(challenges)
+        .set(updateData)
+        .where(eq(challenges.id, id))
+        .returning();
+
+      return updatedChallenge;
+    }),
+
+  // Admin procedure - delete challenge
+  delete: adminProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      const { id } = input;
+
+      const [deletedChallenge] = await db
+        .delete(challenges)
+        .where(eq(challenges.id, id))
+        .returning();
+
+      if (!deletedChallenge) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Challenge not found",
+        });
+      }
+
+      return deletedChallenge;
+    }),
 });

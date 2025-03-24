@@ -1,21 +1,21 @@
 /**
  * This is your API entrypoint
  */
+import { adminRouter } from "./routers/admin";
+import { challengeRouter } from "./routers/challenge";
+import { seasonRouter } from "./routers/season";
+import { userRouter } from "./routers/user";
 import { router } from "./server";
-
-/**
- * Import routers from index file
- */
-import { adminRouter, challengeRouter, userRouter } from "./routers";
 
 /**
  * Create the root router
  * All procedures should be added here
  */
 export const appRouter = router({
-	user: userRouter,
-	challenge: challengeRouter,
 	admin: adminRouter,
+	challenge: challengeRouter,
+	user: userRouter,
+	season: seasonRouter,
 });
 
 // Export type for client usage
