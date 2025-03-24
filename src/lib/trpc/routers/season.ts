@@ -7,17 +7,12 @@ import { adminProcedure, publicProcedure } from "../procedures";
 import { router } from "../server";
 
 export const seasonRouter = router({
-  // Public procedure - list active seasons
+  // Public procedure - list all seasons
   listActive: publicProcedure.query(async () => {
     const now = new Date();
 
-    const activeSeasons = await db.query.seasons.findMany({
-      where: and(
-        lte(seasons.startsAt, now),
-        gte(seasons.endsAt, now),
-        eq(seasons.isActive, true)
-      ),
-      orderBy: (seasons, { asc }) => [asc(seasons.endsAt)],
+    const allSeasons = await db.query.seasons.findMany({
+      orderBy: (seasons, { asc }) => [asc(seasons.startsAt)],
       with: {
         challenges: {
           where: and(
@@ -28,7 +23,7 @@ export const seasonRouter = router({
       },
     });
 
-    return activeSeasons;
+    return allSeasons;
   }),
 
   // Public procedure - get season by ID with full details
@@ -97,11 +92,10 @@ export const seasonRouter = router({
         name: z.string().min(1, "Season name is required"),
         startsAt: z.date(),
         endsAt: z.date(),
-        isActive: z.boolean().default(true),
       }),
     )
     .mutation(async ({ input }) => {
-      const { name, startsAt, endsAt, isActive } = input;
+      const { name, startsAt, endsAt } = input;
 
       // Validate dates
       if (startsAt >= endsAt) {
@@ -111,24 +105,6 @@ export const seasonRouter = router({
         });
       }
 
-      // Check for overlapping active seasons
-      if (isActive) {
-        const overlappingSeasons = await db.query.seasons.findMany({
-          where: and(
-            eq(seasons.isActive, true),
-            lte(seasons.startsAt, endsAt),
-            gte(seasons.endsAt, startsAt)
-          ),
-        });
-
-        if (overlappingSeasons.length > 0) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "There is already an active season during this time period",
-          });
-        }
-      }
-
       // Create new season
       const [season] = await db
         .insert(seasons)
@@ -136,7 +112,6 @@ export const seasonRouter = router({
           name,
           startsAt,
           endsAt,
-          isActive,
         })
         .returning();
 
@@ -151,7 +126,6 @@ export const seasonRouter = router({
         name: z.string().min(1, "Season name is required").optional(),
         startsAt: z.date().optional(),
         endsAt: z.date().optional(),
-        isActive: z.boolean().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -175,44 +149,6 @@ export const seasonRouter = router({
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: "Start date must be before end date",
-          });
-        }
-      } else if (updateData.startsAt && updateData.startsAt >= existingSeason.endsAt) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Start date must be before end date",
-        });
-      } else if (updateData.endsAt && existingSeason.startsAt >= updateData.endsAt) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Start date must be before end date",
-        });
-      }
-
-      // Check for overlapping active seasons if updating active status or dates
-      if (
-        (updateData.isActive === true || existingSeason.isActive) &&
-        (updateData.startsAt || updateData.endsAt)
-      ) {
-        const overlappingSeasons = await db.query.seasons.findMany({
-          where: and(
-            eq(seasons.isActive, true),
-            lte(
-              seasons.startsAt,
-              updateData.endsAt || existingSeason.endsAt
-            ),
-            gte(
-              seasons.endsAt,
-              updateData.startsAt || existingSeason.startsAt
-            ),
-            eq(seasons.id, id)
-          ),
-        });
-
-        if (overlappingSeasons.length > 0) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "There is already an active season during this time period",
           });
         }
       }

@@ -790,8 +790,9 @@ function ExerciseManagementContent() {
 														<AlertDialog>
 															<AlertDialogTrigger asChild>
 																<Button
-																	variant="destructive"
+																	variant="ghost"
 																	size="icon"
+																	className="hover:text-destructive"
 																	disabled={deleteDifficulty.isPending}
 																>
 																	<Trash2 className="h-4 w-4" />
@@ -889,8 +890,9 @@ function ExerciseManagementContent() {
 														<AlertDialog>
 															<AlertDialogTrigger asChild>
 																<Button
-																	variant="destructive"
+																	variant="ghost"
 																	size="icon"
+																	className="hover:text-destructive"
 																	disabled={deleteCategory.isPending}
 																>
 																	<Trash2 className="h-4 w-4" />
@@ -988,8 +990,9 @@ function ExerciseManagementContent() {
 														<AlertDialog>
 															<AlertDialogTrigger asChild>
 																<Button
-																	variant="destructive"
+																	variant="ghost"
 																	size="icon"
+																	className="hover:text-destructive"
 																	disabled={deleteMuscleGroup.isPending}
 																>
 																	<Trash2 className="h-4 w-4" />
