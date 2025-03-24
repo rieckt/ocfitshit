@@ -19,8 +19,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-	title: "OCFitShit - Authentication with Clerk",
-	description: "A Next.js application with Clerk authentication",
+	title: "OCFitShit",
+	description: "OCFitShit",
 };
 
 export default function RootLayout({
@@ -36,10 +36,29 @@ export default function RootLayout({
 			>
 				<ClerkProvider>
 					<Providers>
-						<Toaster richColors position="top-center" />
+						<Toaster
+							position="top-right"
+							expand={false}
+							closeButton
+							theme="system"
+							className="!font-geist-sans"
+							toastOptions={{
+								classNames: {
+									toast: "!bg-zinc-950/50 !backdrop-blur-xl !border !border-zinc-800/50 !shadow-lg dark:!shadow-black/20",
+									title: "!text-zinc-100",
+									description: "!text-zinc-400",
+									actionButton: "!bg-zinc-100 !text-zinc-900 hover:!bg-zinc-200",
+									cancelButton: "!bg-zinc-800 !text-zinc-100 hover:!bg-zinc-700",
+									success: "!bg-emerald-950/50 !border-emerald-800/50",
+									error: "!bg-rose-950/50 !border-rose-800/50",
+									warning: "!bg-amber-950/50 !border-amber-800/50",
+									info: "!bg-sky-950/50 !border-sky-800/50"
+								}
+							}}
+						/>
 						<div className="flex min-h-screen flex-col">
 							<Navigation />
-							<main className="container mx-auto flex-1 px-4 py-8">{children}</main>
+							<main className="flex-1 px-4 py-8">{children}</main>
 						</div>
 					</Providers>
 				</ClerkProvider>
