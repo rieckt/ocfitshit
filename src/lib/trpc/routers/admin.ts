@@ -15,9 +15,100 @@ import {
 import { clerkClient } from "@clerk/nextjs/server";
 import { TRPCError } from "@trpc/server";
 import { and, count, desc, eq, gte, isNull } from "drizzle-orm";
+import { DatabaseError } from "pg";
 import { z } from "zod";
 import { adminProcedure } from "../procedures";
 import { router } from "../server";
+
+// Improved error handling helper with specific database error codes
+const handleDatabaseError = (error: unknown, operation: string) => {
+	// Log the error for debugging
+	console.error(`Database error during ${operation}:`, error);
+
+
+	if (error instanceof DatabaseError) {
+		switch (error.code) {
+			case "23503": // Foreign key violation
+				throw new TRPCError({
+					code: "PRECONDITION_FAILED",
+					message: "This item is referenced by other records and cannot be deleted.",
+					cause: error,
+				});
+			case "23505": // Unique violation
+				throw new TRPCError({
+					code: "CONFLICT",
+					message: "A record with this value already exists.",
+					cause: error,
+				});
+			case "23514": // Check violation
+				throw new TRPCError({
+					code: "BAD_REQUEST",
+					message: "The provided data violates a constraint.",
+					cause: error,
+				});
+			case "42P01": // Undefined table
+				throw new TRPCError({
+					code: "INTERNAL_SERVER_ERROR",
+					message: "Database schema error.",
+					cause: error,
+				});
+			default:
+				throw new TRPCError({
+					code: "INTERNAL_SERVER_ERROR",
+					message: "An unexpected database error occurred.",
+					cause: error,
+				});
+		}
+	}
+
+	// Handle drizzle-specific errors
+	if (error instanceof Error && error.name === "DrizzleError") {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: "Database operation failed.",
+			cause: error,
+		});
+	}
+
+	// Handle other types of errors
+	if (error instanceof Error) {
+		throw new TRPCError({
+			code: "INTERNAL_SERVER_ERROR",
+			message: error.message,
+			cause: error,
+		});
+	}
+
+	// Handle unknown errors
+	throw new TRPCError({
+		code: "INTERNAL_SERVER_ERROR",
+		message: "An unexpected error occurred.",
+		cause: error,
+	});
+};
+
+// Add type-safe error handling helper for common operations
+const handleOperationError = async <T>(
+	operation: () => Promise<T>,
+	context: { operation: string; notFoundMessage?: string }
+): Promise<T> => {
+	try {
+		const result = await operation();
+
+		// Handle null results for operations that should return data
+		if (result === null || (Array.isArray(result) && result.length === 0)) {
+			throw new TRPCError({
+				code: "NOT_FOUND",
+				message: context.notFoundMessage || "Resource not found",
+			});
+		}
+
+		return result;
+	} catch (error) {
+		handleDatabaseError(error, context.operation);
+		throw error; // This line won't be reached but satisfies TypeScript
+	}
+};
 
 export const adminRouter = router({
 	// List all users - equivalent to GET /api/users
@@ -107,51 +198,71 @@ export const adminRouter = router({
 		.input(
 			z.object({
 				name: z.string().min(1, "Exercise name is required"),
-				description: z.string().optional(),
-				equipment: z.string().optional(),
-				difficultyId: z.number().int().positive(),
-				categoryIds: z.array(z.number().int().positive()),
-				muscleGroupIds: z.array(z.number().int().positive()),
+				description: z.string().min(1, "Description is required"),
+				equipment: z.string().min(1, "Equipment information is required"),
+				difficultyId: z.number().int().positive("Difficulty level is required"),
+				categoryIds: z.array(z.number().int().positive()).min(1, "At least one category is required"),
+				muscleGroupIds: z.array(z.number().int().positive()).min(1, "At least one muscle group is required"),
 			}),
 		)
 		.mutation(async ({ input }) => {
 			const { name, description, equipment, difficultyId, categoryIds, muscleGroupIds } = input;
 
 			try {
-				return await db.transaction(async (tx) => {
-					// Create the exercise
-					const [exercise] = await tx
-						.insert(exerciseCatalog)
-						.values({
-							name,
-							description,
-							equipment,
-							difficultyId,
-						})
-						.returning();
+				// Create the exercise first
+				const [exercise] = await db
+					.insert(exerciseCatalog)
+					.values({
+						name,
+						description,
+						equipment,
+						difficultyId,
+					})
+					.returning();
 
-					// Add category links
-					if (categoryIds.length > 0) {
-						await tx.insert(exerciseCategoryLinks).values(
-							categoryIds.map((categoryId) => ({
-								exerciseId: exercise.id,
-								categoryId,
-							})),
-						);
-					}
+				// Add category links
+				if (categoryIds.length > 0) {
+					await db.insert(exerciseCategoryLinks).values(
+						categoryIds.map((categoryId) => ({
+							exerciseId: exercise.id,
+							categoryId,
+						})),
+					);
+				}
 
-					// Add muscle group links
-					if (muscleGroupIds.length > 0) {
-						await tx.insert(exerciseMuscleLinks).values(
-							muscleGroupIds.map((muscleGroupId) => ({
-								exerciseId: exercise.id,
-								muscleGroupId,
-							})),
-						);
-					}
+				// Add muscle group links
+				if (muscleGroupIds.length > 0) {
+					await db.insert(exerciseMuscleLinks).values(
+						muscleGroupIds.map((muscleGroupId) => ({
+							exerciseId: exercise.id,
+							muscleGroupId,
+						})),
+					);
+				}
 
-					return exercise;
+				// Return the created exercise with its relationships
+				const exerciseWithRelations = await db.query.exerciseCatalog.findFirst({
+					where: eq(exerciseCatalog.id, exercise.id),
+					with: {
+						difficulty: true,
+						categories: {
+							with: {
+								category: true,
+							},
+						},
+						muscleGroups: {
+							with: {
+								muscleGroup: true,
+							},
+						},
+					},
 				});
+
+				if (!exerciseWithRelations) {
+					throw new Error("Failed to fetch created exercise");
+				}
+
+				return exerciseWithRelations;
 			} catch (error) {
 				console.error("Error creating exercise:", error);
 				throw new TRPCError({
@@ -194,29 +305,36 @@ export const adminRouter = router({
 			}),
 		)
 		.mutation(async ({ input }) => {
-			const { id } = input;
-
-			try {
-				const [deletedExercise] = await db
-					.delete(exerciseCatalog)
-					.where(eq(exerciseCatalog.id, id))
-					.returning();
-
-				if (!deletedExercise) {
-					throw new TRPCError({
-						code: "NOT_FOUND",
-						message: "Exercise not found",
+			return handleOperationError(
+				async () => {
+					// Check for existing exercise logs
+					const exerciseInUse = await db.query.exerciseLogs.findFirst({
+						where: (logs, { eq }) => eq(logs.exerciseId, input.id)
 					});
-				}
 
-				return deletedExercise;
-			} catch (error) {
-				console.error("Error deleting exercise:", error);
-				throw new TRPCError({
-					code: "INTERNAL_SERVER_ERROR",
-					message: "Failed to delete exercise",
-				});
-			}
+					if (exerciseInUse) {
+						throw new TRPCError({
+							code: "PRECONDITION_FAILED",
+							message: "This exercise cannot be deleted because it has been used in workout logs.",
+						});
+					}
+
+					const [deletedExercise] = await db
+						.delete(exerciseCatalog)
+						.where(eq(exerciseCatalog.id, input.id))
+						.returning();
+
+					if (!deletedExercise) {
+						throw new TRPCError({
+							code: "NOT_FOUND",
+							message: "Exercise not found",
+						});
+					}
+
+					return deletedExercise;
+				},
+				{ operation: "deleteExercise", notFoundMessage: "Exercise not found" }
+			);
 		}),
 
 	// Exercise Categories Management
@@ -321,6 +439,130 @@ export const adminRouter = router({
 					code: "INTERNAL_SERVER_ERROR",
 					message: "Failed to create muscle group",
 				});
+			}
+		}),
+
+	// Add delete procedures for difficulties, categories, and muscle groups
+	deleteDifficulty: adminProcedure
+		.input(
+			z.object({
+				id: z.number().int().positive(),
+			}),
+		)
+		.mutation(async ({ input }) => {
+			const { id } = input;
+
+			try {
+				// First check if the difficulty is being used by any exercises
+				const exercisesUsingDifficulty = await db
+					.select({ count: count() })
+					.from(exerciseCatalog)
+					.where(eq(exerciseCatalog.difficultyId, id));
+
+				if (exercisesUsingDifficulty[0]?.count > 0) {
+					throw new TRPCError({
+						code: "PRECONDITION_FAILED",
+						message: "This difficulty level cannot be deleted because it is being used by existing exercises.",
+					});
+				}
+
+				const [deletedDifficulty] = await db
+					.delete(exerciseDifficulties)
+					.where(eq(exerciseDifficulties.id, id))
+					.returning();
+
+				if (!deletedDifficulty) {
+					throw new TRPCError({
+						code: "NOT_FOUND",
+						message: "Difficulty level not found",
+					});
+				}
+
+				return deletedDifficulty;
+			} catch (error) {
+				handleDatabaseError(error, "deleting difficulty");
+			}
+		}),
+
+	deleteCategory: adminProcedure
+		.input(
+			z.object({
+				id: z.number().int().positive(),
+			}),
+		)
+		.mutation(async ({ input }) => {
+			const { id } = input;
+
+			try {
+				// First check if the category is being used by any exercises
+				const exercisesUsingCategory = await db
+					.select({ count: count() })
+					.from(exerciseCategoryLinks)
+					.where(eq(exerciseCategoryLinks.categoryId, id));
+
+				if (exercisesUsingCategory[0]?.count > 0) {
+					throw new TRPCError({
+						code: "PRECONDITION_FAILED",
+						message: "This category cannot be deleted because it is being used by existing exercises.",
+					});
+				}
+
+				const [deletedCategory] = await db
+					.delete(exerciseCategories)
+					.where(eq(exerciseCategories.id, id))
+					.returning();
+
+				if (!deletedCategory) {
+					throw new TRPCError({
+						code: "NOT_FOUND",
+						message: "Category not found",
+					});
+				}
+
+				return deletedCategory;
+			} catch (error) {
+				handleDatabaseError(error, "deleting category");
+			}
+		}),
+
+	deleteMuscleGroup: adminProcedure
+		.input(
+			z.object({
+				id: z.number().int().positive(),
+			}),
+		)
+		.mutation(async ({ input }) => {
+			const { id } = input;
+
+			try {
+				// First check if the muscle group is being used by any exercises
+				const exercisesUsingMuscleGroup = await db
+					.select({ count: count() })
+					.from(exerciseMuscleLinks)
+					.where(eq(exerciseMuscleLinks.muscleGroupId, id));
+
+				if (exercisesUsingMuscleGroup[0]?.count > 0) {
+					throw new TRPCError({
+						code: "PRECONDITION_FAILED",
+						message: "This muscle group cannot be deleted because it is being used by existing exercises.",
+					});
+				}
+
+				const [deletedMuscleGroup] = await db
+					.delete(muscleGroups)
+					.where(eq(muscleGroups.id, id))
+					.returning();
+
+				if (!deletedMuscleGroup) {
+					throw new TRPCError({
+						code: "NOT_FOUND",
+						message: "Muscle group not found",
+					});
+				}
+
+				return deletedMuscleGroup;
+			} catch (error) {
+				handleDatabaseError(error, "deleting muscle group");
 			}
 		}),
 
