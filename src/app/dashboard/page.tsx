@@ -1,3 +1,4 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 
@@ -19,27 +20,35 @@ export default async function DashboardPage() {
 	}
 
 	return (
-		<div className="bg-white shadow-md rounded-lg p-6">
+		<div className="p-8">
 			<h1 className="text-2xl font-bold mb-4">Dashboard</h1>
-			<p className="mb-4">Welcome, {user.firstName}!</p>
-			<p className="text-gray-600">
+			<p className="mb-4">Welcome, {user.username}!</p>
+			<p className="text-muted-foreground mb-6">
 				This is a protected page. Only authenticated users can see this.
 			</p>
 
 			<div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-				<div className="border border-gray-200 rounded-md p-4">
-					<h2 className="text-lg font-medium mb-2">Your Profile</h2>
-					<p className="text-gray-600">
-						This section would display user profile information from Clerk.
-					</p>
-				</div>
+				<Card>
+					<CardHeader>
+						<CardTitle>Your Profile</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<p className="text-muted-foreground">
+							This section would display user profile information from Clerk.
+						</p>
+					</CardContent>
+				</Card>
 
-				<div className="border border-gray-200 rounded-md p-4">
-					<h2 className="text-lg font-medium mb-2">Account Settings</h2>
-					<p className="text-gray-600">
-						This section would allow users to manage their account settings.
-					</p>
-				</div>
+				<Card>
+					<CardHeader>
+						<CardTitle>Account Settings</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<p className="text-muted-foreground">
+							This section would allow users to manage their account settings.
+						</p>
+					</CardContent>
+				</Card>
 			</div>
 		</div>
 	);

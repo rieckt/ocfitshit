@@ -93,11 +93,5 @@ Clerk wird als zentrale Authentifizierungslösung verwendet und nahtlos in die A
    NEXT_PUBLIC_CLERK_SIGN_UP_URL=/register
    NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/
    NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/
+   DATABASE_URL=your_database_url
    ```
-
-## Nächste Schritte
-
-1. **Clerk API-Schlüssel einrichten:** Registrieren Sie sich bei Clerk.dev und ersetzen Sie die Platzhalter in `.env.local` durch Ihre tatsächlichen API-Schlüssel.
-2. **Datenbank-Integration:** Implementieren Sie die PostgreSQL-Datenbank mit Drizzle ORM für die Speicherung von Wettbewerbsdaten.
-3. **Wettbewerbsfunktionen:** Entwickeln Sie die Kernfunktionen für das Wettbewerbsmanagement und Tracking.
-4. **UI-Verbesserungen:** Integrieren Sie ShadCN UI-Komponenten für ein konsistentes Design.

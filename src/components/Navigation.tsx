@@ -1,11 +1,17 @@
 "use client";
 
-import { SignInButton, SignOutButton, useAuth } from "@clerk/nextjs";
+import { Button } from "@/components/ui/button";
+import { NavigationMenu, NavigationMenuItem, NavigationMenuLink, NavigationMenuList, navigationMenuTriggerStyle } from "@/components/ui/navigation-menu";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { SignInButton, SignOutButton, useAuth, useUser } from "@clerk/nextjs";
+import { Menu } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { toast } from "sonner";
 
 export default function Navigation() {
 	const { userId, isLoaded } = useAuth();
+	const { user } = useUser();
 	const pathname = usePathname();
 
 	// Function to determine if a link is active
@@ -13,79 +19,151 @@ export default function Navigation() {
 		return pathname === path;
 	};
 
-	return (
-		<nav className="bg-gray-800 text-white p-4">
-			<div className="container mx-auto flex justify-between items-center">
-				<div className="flex items-center space-x-4">
-					<Link href="/" className="text-xl font-bold">
-						OCFitShit
-					</Link>
+	// Check if user is admin
+	const isAdmin = user?.publicMetadata?.role === "admin";
 
-					<div className="hidden md:flex space-x-4">
-						<Link
-							href="/"
-							className={`hover:text-gray-300 ${isActive("/") ? "text-white font-semibold" : "text-gray-300"}`}
-						>
-							Home
+	// Handle secure navigation with permission checks
+	const handleNavigation = (href: string, requiresAdmin = false) => {
+		// If requires admin and user is not admin
+		if (requiresAdmin && !isAdmin) {
+			toast.error("You don't have permission to access the admin area");
+			return false;
+		}
+
+		return true;
+	};
+
+	// Navigation links array to use in both desktop and mobile nav
+	const navLinks = [
+		{ href: "/", label: "Home", requireAuth: false, requireAdmin: false },
+		{ href: "/dashboard", label: "Dashboard", requireAuth: true, requireAdmin: false },
+		{ href: "/admin", label: "Admin", requireAuth: true, requireAdmin: true },
+	];
+
+	return (
+		<>
+			<header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+				<div className="flex h-16 items-center justify-between px-4">
+					<div className="flex items-center gap-6">
+						<Link href="/" className="font-bold text-xl">
+							OCFitShit
 						</Link>
 
-						{/* Only show dashboard link if user is authenticated */}
-						{userId && (
-							<Link
-								href="/dashboard"
-								className={`hover:text-gray-300 ${isActive("/dashboard") ? "text-white font-semibold" : "text-gray-300"}`}
-							>
-								Dashboard
-							</Link>
-						)}
+						{/* Desktop Navigation */}
+						<NavigationMenu className="hidden md:flex">
+							<NavigationMenuList>
+								{navLinks.map((link) => {
+									// Only show if not requiring auth or user is logged in
+									if (!link.requireAuth || userId) {
+										// Hide admin links for non-admins
+										if (link.requireAdmin && !isAdmin) {
+											return null;
+										}
 
-						{/* Placeholder for admin link - we would check for admin role here */}
-						{userId && (
-							<Link
-								href="/admin"
-								className={`hover:text-gray-300 ${isActive("/admin") ? "text-white font-semibold" : "text-gray-300"}`}
-							>
-								Admin
-							</Link>
+										return (
+											<NavigationMenuItem key={link.href}>
+												<Link
+													href={link.href}
+													legacyBehavior
+													passHref
+													onClick={(e) => {
+														if (!handleNavigation(link.href, link.requireAdmin)) {
+															e.preventDefault();
+														}
+													}}
+												>
+													<NavigationMenuLink className={navigationMenuTriggerStyle()}>
+														{link.label}
+													</NavigationMenuLink>
+												</Link>
+											</NavigationMenuItem>
+										);
+									}
+									return null;
+								})}
+							</NavigationMenuList>
+						</NavigationMenu>
+
+						{/* Mobile Navigation */}
+						<div className="md:hidden">
+							<Sheet>
+								<SheetTrigger asChild>
+									<Button variant="ghost" size="icon" className="h-10 w-10">
+										<Menu className="h-5 w-5" />
+										<span className="sr-only">Toggle menu</span>
+									</Button>
+								</SheetTrigger>
+								<SheetContent side="left">
+									<div className="px-2 py-6 flex flex-col gap-4">
+										<Link href="/" className="font-bold text-xl px-2">
+											OCFitShit
+										</Link>
+										<div className="flex flex-col gap-2">
+											{navLinks.map((link) => {
+												// Only show if not requiring auth or user is logged in
+												if (!link.requireAuth || userId) {
+													// Hide admin links for non-admins
+													if (link.requireAdmin && !isAdmin) {
+														return null;
+													}
+
+													return (
+														<Link
+															key={link.href}
+															href={link.href}
+															className={`px-2 py-1 rounded-md ${
+																isActive(link.href)
+																	? "bg-accent text-accent-foreground"
+																	: "hover:bg-accent/50"
+															}`}
+															onClick={(e) => {
+																if (!handleNavigation(link.href, link.requireAdmin)) {
+																	e.preventDefault();
+																}
+															}}
+														>
+															{link.label}
+														</Link>
+													);
+												}
+												return null;
+											})}
+										</div>
+									</div>
+								</SheetContent>
+							</Sheet>
+						</div>
+					</div>
+
+					<div className="flex items-center gap-2">
+						{!isLoaded ? (
+							// Show loading state
+							<div className="h-9 w-24 animate-pulse rounded bg-muted" />
+						) : userId ? (
+							// User is signed in
+							<SignOutButton>
+								<Button variant="destructive">
+									Sign Out
+								</Button>
+							</SignOutButton>
+						) : (
+							// User is not signed in
+							<>
+								<SignInButton mode="modal">
+									<Button>
+										Sign In
+									</Button>
+								</SignInButton>
+								<Button variant="outline" asChild>
+									<Link href="/register">
+										Register
+									</Link>
+								</Button>
+							</>
 						)}
 					</div>
 				</div>
-
-				<div className="flex items-center space-x-4">
-					{!isLoaded ? (
-						// Show loading state
-						<div className="h-8 w-20 bg-gray-700 animate-pulse rounded" />
-					) : userId ? (
-						// User is signed in
-						<SignOutButton>
-							<button
-								type="button"
-								className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
-							>
-								Sign Out
-							</button>
-						</SignOutButton>
-					) : (
-						// User is not signed in
-						<>
-							<SignInButton mode="modal">
-								<button
-									type="button"
-									className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
-								>
-									Sign In
-								</button>
-							</SignInButton>
-							<Link
-								href="/register"
-								className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded"
-							>
-								Register
-							</Link>
-						</>
-					)}
-				</div>
-			</div>
-		</nav>
+			</header>
+		</>
 	);
 }

@@ -1,33 +1,65 @@
 {
-    "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-    "files": {
-        "ignore": [
-            "**/*.css"
-        ],
-        "ignoreUnknown": false
-    },
-    "formatter": {
-        "enabled": true,
-        "indentStyle": "tab"
-    },
-    "javascript": {
-        "formatter": {
-            "quoteStyle": "double"
-        }
-    },
-    "linter": {
-        "enabled": true,
-        "rules": {
-            "recommended": true,
-            "style": {}
-        }
-    },
-    "organizeImports": {
-        "enabled": true
-    },
-    "vcs": {
-        "clientKind": "git",
-        "enabled": false,
-        "useIgnoreFile": false
-    }
+	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+	"files": {
+		"ignore": [
+			"node_modules",
+			".next",
+			"dist",
+			"build",
+			"public",
+			"*.config.{js,ts}",
+			"next-env.d.ts"
+		],
+		"include": ["src/**/*.{ts,tsx,js,jsx,json}"]
+	},
+	"formatter": {
+		"enabled": true,
+		"formatWithErrors": false,
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineWidth": 80
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"semicolons": "always",
+			"trailingCommas": "all"
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"a11y": {
+				"useButtonType": "error"
+			},
+			"complexity": {
+				"noExcessiveCognitiveComplexity": "error",
+				"noUselessFragments": "error"
+			},
+			"correctness": {
+				"noUnusedVariables": "error",
+				"useExhaustiveDependencies": "error"
+			},
+			"recommended": true,
+			"security": {
+				"noDangerouslySetInnerHtml": "error"
+			},
+			"style": {
+				"noNegationElse": "error",
+				"useShorthandArrayType": "error"
+			},
+			"suspicious": {
+				"noConsoleLog": "warn",
+				"noExplicitAny": "warn"
+			}
+		}
+	},
+	"organizeImports": {
+		"enabled": true
+	},
+	"vcs": {
+		"clientKind": "git",
+		"enabled": true,
+		"useIgnoreFile": true
+	}
 }
