@@ -86,7 +86,7 @@ Clerk wird als zentrale Authentifizierungslösung verwendet und nahtlos in die A
 
    Die folgenden Umgebungsvariablen müssen in `.env.local` konfiguriert werden:
 
-   ```
+   ```env
    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_publishable_key
    CLERK_SECRET_KEY=your_secret_key
    NEXT_PUBLIC_CLERK_SIGN_IN_URL=/login
