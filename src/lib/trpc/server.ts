@@ -1,4 +1,3 @@
-import type { inferAsyncReturnType } from "@trpc/server";
 import { initTRPC } from "@trpc/server";
 import superjson from "superjson";
 import { type Context, createContext } from "./context";
@@ -28,7 +27,7 @@ export { createContext };
 export type { Context };
 
 // Export helper types for better DX
-export type RouterContext = inferAsyncReturnType<typeof createContext>;
+export type RouterContext = Context;
 export type Middleware = typeof middleware;
 export type Procedure = typeof publicProcedure;
 
