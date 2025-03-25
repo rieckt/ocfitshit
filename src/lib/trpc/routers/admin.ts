@@ -9,267 +9,201 @@ import {
     levelRequirements,
     muscleGroups,
     seasons,
-    teams,
-    userProfiles
+    teams
 } from "@/db/schema";
-import { clerkClient } from "@clerk/nextjs/server";
+import type { User } from "@clerk/nextjs/server";
+import { clerkClient, currentUser } from "@clerk/nextjs/server";
 import { TRPCError } from "@trpc/server";
-import { and, count, desc, eq, gte, isNull } from "drizzle-orm";
+import { and, count, eq, gte } from "drizzle-orm";
 import { DatabaseError } from "pg";
 import { z } from "zod";
-import { adminProcedure } from "../procedures";
+import { adminProcedure, publicProcedure } from "../procedures";
 import { router } from "../server";
 
-// Improved error handling helper with specific database error codes
+// Improved input validation schemas
+const exerciseInput = z.object({
+	name: z.string().min(1, "Exercise name is required"),
+	description: z.string().min(1, "Description is required"),
+	equipment: z.string().min(1, "Equipment information is required"),
+	difficultyId: z.number().int().positive("Difficulty level is required"),
+	categoryIds: z.array(z.number().int().positive()).min(1, "At least one category is required"),
+	muscleGroupIds: z.array(z.number().int().positive()).min(1, "At least one muscle group is required"),
+});
+
+const seasonInput = z.object({
+	name: z.string().min(1, "Season name is required"),
+	startsAt: z.date(),
+	endsAt: z.date(),
+	isActive: z.boolean().default(true),
+}).refine(data => data.startsAt < data.endsAt, {
+	message: "Start date must be before end date",
+	path: ["startsAt"],
+});
+
+const challengeInput = z.object({
+	seasonId: z.string().uuid(),
+	name: z.string().min(1, "Challenge name is required"),
+	description: z.string().optional(),
+	startsAt: z.date(),
+	endsAt: z.date(),
+	isTeamBased: z.boolean().default(false),
+	pointsMultiplier: z.number().int().positive().default(1),
+}).refine(data => data.startsAt < data.endsAt, {
+	message: "Start date must be before end date",
+	path: ["startsAt"],
+});
+
+// Improved error handling helper
 const handleDatabaseError = (error: unknown, operation: string) => {
-	// Log the error for debugging
 	console.error(`Database error during ${operation}:`, error);
 
-
 	if (error instanceof DatabaseError) {
-		switch (error.code) {
-			case "23503": // Foreign key violation
-				throw new TRPCError({
-					code: "PRECONDITION_FAILED",
-					message: "This item is referenced by other records and cannot be deleted.",
-					cause: error,
-				});
-			case "23505": // Unique violation
-				throw new TRPCError({
-					code: "CONFLICT",
-					message: "A record with this value already exists.",
-					cause: error,
-				});
-			case "23514": // Check violation
-				throw new TRPCError({
-					code: "BAD_REQUEST",
-					message: "The provided data violates a constraint.",
-					cause: error,
-				});
-			case "42P01": // Undefined table
-				throw new TRPCError({
-					code: "INTERNAL_SERVER_ERROR",
-					message: "Database schema error.",
-					cause: error,
-				});
-			default:
-				throw new TRPCError({
-					code: "INTERNAL_SERVER_ERROR",
-					message: "An unexpected database error occurred.",
-					cause: error,
-				});
+		const errorMap: Record<string, TRPCError> = {
+			"23503": new TRPCError({
+				code: "PRECONDITION_FAILED",
+				message: "This item is referenced by other records and cannot be deleted.",
+			}),
+			"23505": new TRPCError({
+				code: "CONFLICT",
+				message: "A record with this value already exists.",
+			}),
+			"23514": new TRPCError({
+				code: "BAD_REQUEST",
+				message: "The provided data violates a constraint.",
+			}),
+		};
+
+		if (error.code && error.code in errorMap) {
+			return errorMap[error.code as keyof typeof errorMap];
 		}
 	}
 
-	// Handle drizzle-specific errors
-	if (error instanceof Error && error.name === "DrizzleError") {
-		throw new TRPCError({
-			code: "INTERNAL_SERVER_ERROR",
-			message: "Database operation failed.",
-			cause: error,
-		});
-	}
-
-	// Handle other types of errors
-	if (error instanceof Error) {
-		throw new TRPCError({
-			code: "INTERNAL_SERVER_ERROR",
-			message: error.message,
-			cause: error,
-		});
-	}
-
-	// Handle unknown errors
 	throw new TRPCError({
 		code: "INTERNAL_SERVER_ERROR",
 		message: "An unexpected error occurred.",
-		cause: error,
 	});
 };
 
-// Add type-safe error handling helper for common operations
-const handleOperationError = async <T>(
+// Type-safe operation wrapper
+const safeOperation = async <T>(
 	operation: () => Promise<T>,
 	context: { operation: string; notFoundMessage?: string }
 ): Promise<T> => {
 	try {
 		const result = await operation();
-
-		// Handle null results for operations that should return data
 		if (result === null || (Array.isArray(result) && result.length === 0)) {
 			throw new TRPCError({
 				code: "NOT_FOUND",
 				message: context.notFoundMessage || "Resource not found",
 			});
 		}
-
 		return result;
 	} catch (error) {
 		handleDatabaseError(error, context.operation);
-		throw error; // This line won't be reached but satisfies TypeScript
+		throw error;
 	}
 };
 
 export const adminRouter = router({
-	// List all users - equivalent to GET /api/users
-	listUsers: adminProcedure.query(async () => {
-		try {
-			// Use the Clerk API to fetch all users
-			const clerk = await clerkClient();
-			const usersResponse = await clerk.users.getUserList({
-				limit: 100,
-			});
+	// User Management
+	checkIsAdmin: publicProcedure.query(async ({ ctx }) => {
+		const { userId } = ctx;
+		if (!userId) return false;
 
-			// Map the Clerk user data to a simpler format
-			const users = usersResponse.data.map((user) => ({
-				id: user.id,
-				firstName: user.firstName || "",
-				lastName: user.lastName || "",
-				email: user.emailAddresses[0]?.emailAddress || "",
-				username: user.username || "",
-				isAdmin: user.publicMetadata?.role === "admin",
-			}));
-
-			return users;
-		} catch (error) {
-			console.error("Error fetching users:", error);
-			throw new TRPCError({
-				code: "INTERNAL_SERVER_ERROR",
-				message: "Failed to fetch users",
-			});
-		}
+		return safeOperation(
+			async () => {
+				const user = await currentUser();
+				return user?.publicMetadata?.role === "admin" || false;
+			},
+			{ operation: "checkIsAdmin" }
+		);
 	}),
 
-	// Set admin role - equivalent to /api/set-admin-role
+	listUsers: adminProcedure.query(async () => {
+		return safeOperation(
+			async () => {
+				const userList = await clerkClient().then(client => client.users.getUserList({ limit: 100 }));
+				return userList.data.map((user: User) => ({
+					id: user.id,
+					firstName: user.firstName || "",
+					lastName: user.lastName || "",
+					email: user.emailAddresses[0]?.emailAddress || "",
+					username: user.username || "",
+					isAdmin: user.publicMetadata?.role === "admin",
+					avatarUrl: user.imageUrl,
+				}));
+			},
+			{ operation: "listUsers" }
+		);
+	}),
+
 	setAdminRole: adminProcedure
-		.input(
-			z.object({
-				username: z.string(),
-				isAdmin: z.boolean(),
-			}),
-		)
+		.input(z.object({
+			username: z.string(),
+			isAdmin: z.boolean(),
+		}))
 		.mutation(async ({ input }) => {
-			const { username, isAdmin } = input;
+			return safeOperation(
+				async () => {
+					const users = await clerkClient().then(client => client.users.getUserList({
+						username: [input.username],
+					}));
 
-			try {
-				// Update the user's metadata
-				const clerk = await clerkClient();
+					if (!users.data.length) {
+						throw new TRPCError({
+							code: "NOT_FOUND",
+							message: "Username not found",
+						});
+					}
 
-				// First find the user by username
-				const users = await clerk.users.getUserList({
-					username: [username],
-				});
+					await clerkClient().then(client => client.users.updateUser(users.data[0].id, {
+						publicMetadata: { role: input.isAdmin ? "admin" : "user" },
+					}));
 
-				if (!users.data.length) {
-					throw new TRPCError({
-						code: "NOT_FOUND",
-						message: "Username does not exist. Please check the username and try again.",
-					});
-				}
-
-				const userId = users.data[0].id;
-
-				// Now update the user's metadata
-				await clerk.users.updateUser(userId, {
-					publicMetadata: {
-						role: isAdmin ? "admin" : "user",
-					},
-				});
-
-				return { success: true };
-			} catch (error) {
-				console.error("Error setting admin role:", error);
-
-				// If it's already a TRPCError (from our check above), re-throw it
-				if (error instanceof TRPCError) {
-					throw error;
-				}
-
-				// Otherwise, it's some other error from the Clerk API
-				throw new TRPCError({
-					code: "INTERNAL_SERVER_ERROR",
-					message: "Failed to set admin role. Please try again or contact support.",
-				});
-			}
+					return { success: true };
+				},
+				{ operation: "setAdminRole" }
+			);
 		}),
 
 	// Exercise Management
 	createExercise: adminProcedure
-		.input(
-			z.object({
-				name: z.string().min(1, "Exercise name is required"),
-				description: z.string().min(1, "Description is required"),
-				equipment: z.string().min(1, "Equipment information is required"),
-				difficultyId: z.number().int().positive("Difficulty level is required"),
-				categoryIds: z.array(z.number().int().positive()).min(1, "At least one category is required"),
-				muscleGroupIds: z.array(z.number().int().positive()).min(1, "At least one muscle group is required"),
-			}),
-		)
+		.input(exerciseInput)
 		.mutation(async ({ input }) => {
-			const { name, description, equipment, difficultyId, categoryIds, muscleGroupIds } = input;
-
-			try {
-				// Create the exercise first
-				const [exercise] = await db
+			return db.transaction(async (tx) => {
+				const [exercise] = await tx
 					.insert(exerciseCatalog)
 					.values({
-						name,
-						description,
-						equipment,
-						difficultyId,
+						name: input.name,
+						description: input.description,
+						equipment: input.equipment,
+						difficultyId: input.difficultyId,
 					})
 					.returning();
 
-				// Add category links
-				if (categoryIds.length > 0) {
-					await db.insert(exerciseCategoryLinks).values(
-						categoryIds.map((categoryId) => ({
-							exerciseId: exercise.id,
-							categoryId,
-						})),
-					);
-				}
+				await tx.insert(exerciseCategoryLinks).values(
+					input.categoryIds.map(categoryId => ({
+						exerciseId: exercise.id,
+						categoryId,
+					}))
+				);
 
-				// Add muscle group links
-				if (muscleGroupIds.length > 0) {
-					await db.insert(exerciseMuscleLinks).values(
-						muscleGroupIds.map((muscleGroupId) => ({
-							exerciseId: exercise.id,
-							muscleGroupId,
-						})),
-					);
-				}
+				await tx.insert(exerciseMuscleLinks).values(
+					input.muscleGroupIds.map(muscleGroupId => ({
+						exerciseId: exercise.id,
+						muscleGroupId,
+					}))
+				);
 
-				// Return the created exercise with its relationships
-				const exerciseWithRelations = await db.query.exerciseCatalog.findFirst({
+				return tx.query.exerciseCatalog.findFirst({
 					where: eq(exerciseCatalog.id, exercise.id),
 					with: {
 						difficulty: true,
-						categories: {
-							with: {
-								category: true,
-							},
-						},
-						muscleGroups: {
-							with: {
-								muscleGroup: true,
-							},
-						},
+						categories: { with: { category: true } },
+						muscleGroups: { with: { muscleGroup: true } },
 					},
 				});
-
-				if (!exerciseWithRelations) {
-					throw new Error("Failed to fetch created exercise");
-				}
-
-				return exerciseWithRelations;
-			} catch (error) {
-				console.error("Error creating exercise:", error);
-				throw new TRPCError({
-					code: "INTERNAL_SERVER_ERROR",
-					message: "Failed to create exercise",
-				});
-			}
+			});
 		}),
 
 	getExercises: adminProcedure.query(async () => {
@@ -305,7 +239,7 @@ export const adminRouter = router({
 			}),
 		)
 		.mutation(async ({ input }) => {
-			return handleOperationError(
+			return safeOperation(
 				async () => {
 					// Check for existing exercise logs
 					const exerciseInUse = await db.query.exerciseLogs.findFirst({
@@ -568,14 +502,7 @@ export const adminRouter = router({
 
 	// Season Management
 	createSeason: adminProcedure
-		.input(
-			z.object({
-				name: z.string().min(1, "Season name is required"),
-				startsAt: z.date(),
-				endsAt: z.date(),
-				isActive: z.boolean().default(true),
-			}),
-		)
+		.input(seasonInput)
 		.mutation(async ({ input }) => {
 			try {
 				const [season] = await db
@@ -610,17 +537,7 @@ export const adminRouter = router({
 
 	// Challenge Management
 	createChallenge: adminProcedure
-		.input(
-			z.object({
-				seasonId: z.string().uuid(),
-				name: z.string().min(1, "Challenge name is required"),
-				description: z.string().optional(),
-				startsAt: z.date(),
-				endsAt: z.date(),
-				isTeamBased: z.boolean().default(false),
-				pointsMultiplier: z.number().int().positive().default(1),
-			}),
-		)
+		.input(challengeInput)
 		.mutation(async ({ input }) => {
 			try {
 				const [challenge] = await db
@@ -717,79 +634,60 @@ export const adminRouter = router({
 		}
 	}),
 
+	// Dashboard Stats
 	getDashboardStats: adminProcedure.query(async () => {
-		const now = new Date();
-		const lastMonth = new Date();
-		lastMonth.setMonth(lastMonth.getMonth() - 1);
+		return safeOperation(
+			async () => {
+				const [
+					usersResponse,
+					{ activeChallenges },
+					{ exerciseCount },
+					{ activeTeams },
+				] = await Promise.all([
+					clerkClient().then(client => client.users.getUserList({ limit: 100 })),
+					db
+						.select({ activeChallenges: count(challenges.id) })
+						.from(challenges)
+						.where(and(gte(challenges.endsAt, new Date()), eq(challenges.isTeamBased, true)))
+						.then(rows => rows[0]),
+					db
+						.select({ exerciseCount: count(exerciseCatalog.id) })
+						.from(exerciseCatalog)
+						.then(rows => rows[0]),
+					db
+						.select({ activeTeams: count(teams.id) })
+						.from(teams)
+						.then(rows => rows[0]),
+				]);
 
-		const [
-			totalUsers,
-			activeChallenges,
-			exerciseCount,
-			activeTeams,
-			recentActivity,
-			usersGrowth
-		] = await Promise.all([
-			// Get total users count
-			db
-				.select({ count: count() })
-				.from(userProfiles)
-				.then((result) => result[0]?.count ?? 0),
+				const thirtyDaysAgo = new Date();
+				thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-			// Get active challenges count
-			db
-				.select({ count: count() })
-				.from(challenges)
-				.where(
-					and(
-						gte(challenges.startsAt, now),
-						isNull(challenges.endsAt)
-					)
-				)
-				.then((result) => result[0]?.count ?? 0),
-
-			// Get total exercises count
-			db
-				.select({ count: count() })
-				.from(exerciseCatalog)
-				.then((result) => result[0]?.count ?? 0),
-
-			// Get active teams count
-			db
-				.select({ count: count() })
-				.from(teams)
-				.then((result) => result[0]?.count ?? 0),
-
-			// Get recent activity (new users)
-			db
-				.select({
-					userId: userProfiles.userId,
-					displayName: userProfiles.displayName,
-					avatarUrl: userProfiles.avatarUrl,
-					level: userProfiles.level,
-					createdAt: userProfiles.createdAt,
-				})
-				.from(userProfiles)
-				.orderBy(desc(userProfiles.createdAt))
-				.limit(5),
-
-			// Get users growth (users joined last month)
-			db
-				.select({ count: count() })
-				.from(userProfiles)
-				.where(gte(userProfiles.createdAt, lastMonth))
-				.then((result) => result[0]?.count ?? 0),
-		]);
-
-		return {
-			stats: {
-				totalUsers,
-				activeChallenges,
-				exerciseCount,
-				activeTeams,
-				usersGrowth,
+				return {
+					stats: {
+						totalUsers: usersResponse.totalCount,
+						activeChallenges,
+						exerciseCount,
+						activeTeams,
+						usersGrowth: usersResponse.data.filter(
+							(user: User) => new Date(user.createdAt) >= thirtyDaysAgo
+						).length,
+					},
+					recentActivity: usersResponse.data
+						.sort((a: User, b: User) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+						.slice(0, 10)
+						.map((user: User) => ({
+							userId: user.id,
+							displayName: user.firstName && user.lastName
+								? `${user.firstName} ${user.lastName}`
+								: user.username || "Anonymous User",
+							avatarUrl: user.imageUrl,
+							level: 1,
+							createdAt: new Date(user.createdAt),
+						})),
+				};
 			},
-			recentActivity,
-		};
+			{ operation: "getDashboardStats" }
+		);
 	}),
 });

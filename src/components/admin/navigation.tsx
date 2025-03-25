@@ -190,3 +190,5 @@ export function AdminNavigation({ user }: AdminNavigationProps) {
         </>
     );
 }
+
+export default AdminNavigation;

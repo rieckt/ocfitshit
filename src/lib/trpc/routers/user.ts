@@ -3,130 +3,135 @@ import {
     exerciseCatalog,
     exerciseLogs,
     levelRequirements,
-    teamMembers,
-    teams,
     userProfiles
 } from "@/db/schema";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { loggerMiddleware } from "../middleware/index";
 import { adminProcedure, protectedProcedure, publicProcedure } from "../procedures";
 import { router } from "../server";
+import {
+    metadataSchema,
+    paginationSchema,
+    positiveNumber,
+    uuidString,
+} from "../transformers/input";
 
-// Fix the exerciseLogs type error in getExerciseHistory
-type ExerciseLog = typeof exerciseLogs.$inferSelect;
+// Input schemas with transformers - using lazy evaluation for complex types
+const userIdSchema = z.object({
+	userId: z.string()
+}).brand<'UserId'>();
 
-export const userRouter = router({
-	// Public procedure - get user by ID with stats
-	getById: publicProcedure
-		.input(z.object({ userId: z.string() }))
-		.query(async ({ input }) => {
-			const { userId } = input;
+// Using lazy evaluation for complex nested schema
+const logExerciseSchema = z.lazy(() => z.object({
+	exerciseId: uuidString,
+	challengeId: uuidString.optional(),
+	quantity: positiveNumber.optional(),
+	unit: z.string().min(1).optional(),
+	sets: positiveNumber.optional(),
+	weight: positiveNumber.optional(),
+	duration: positiveNumber.optional(),
+	calories: positiveNumber.optional(),
+	metadata: metadataSchema.optional(),
+}));
 
-			const user = await db.query.userProfiles.findFirst({
-				where: eq(userProfiles.userId, userId),
+// Output schemas - simplified and using lazy evaluation
+const exerciseLogSchema = z.lazy(() => z.object({
+	id: z.string(),
+	userId: z.string(),
+	exerciseId: z.string(),
+	points: z.number(),
+	createdAt: z.date(),
+}));
+
+// Pre-compute common query includes for better performance
+const profileIncludes = {
+	level: true,
+	badges: true,
+	teamMembers: {
+		with: {
+			team: true,
+		},
+	},
+} as const;
+
+const exerciseIncludes = {
+	difficulty: true,
+	categories: {
+		with: {
+			category: true,
+		},
+	},
+	muscleGroups: {
+		with: {
+			muscleGroup: true,
+		},
+	},
+} as const;
+
+// Sub-routers with optimized type handling
+const profileRouter = router({
+	get: protectedProcedure
+		.use(loggerMiddleware)
+		.query(async ({ ctx }) => {
+			const profile = await db.query.userProfiles.findFirst({
+				where: eq(userProfiles.userId, ctx.userId),
 				with: {
-					level: true,
-					badges: true,
-					teamMembers: {
+					...profileIncludes,
+					exerciseLogs: {
+						orderBy: (exerciseLogs, { desc }) => [desc(exerciseLogs.createdAt)],
+						limit: 10,
 						with: {
-							team: true,
+							exercise: {
+								with: exerciseIncludes,
+							},
 						},
 					},
 				},
+			});
+
+			if (!profile) {
+				throw new TRPCError({
+					code: "NOT_FOUND",
+					message: "User profile not found",
+					cause: { userId: ctx.userId },
+				});
+			}
+
+			return profile;
+		}),
+
+	getById: publicProcedure
+		.input(userIdSchema)
+		.use(loggerMiddleware)
+		.query(async ({ input }) => {
+			const user = await db.query.userProfiles.findFirst({
+				where: eq(userProfiles.userId, input.userId),
+				with: profileIncludes,
 			});
 
 			if (!user) {
 				throw new TRPCError({
 					code: "NOT_FOUND",
 					message: "User not found",
+					cause: { userId: input.userId },
 				});
 			}
 
 			return user;
 		}),
+});
 
-	// Protected procedure - get current user profile with full details
-	getProfile: protectedProcedure.query(async ({ ctx }) => {
-		const { userId } = ctx;
-
-		const profile = await db.query.userProfiles.findFirst({
-			where: eq(userProfiles.userId, userId),
-			with: {
-				level: true,
-				badges: true,
-				teamMembers: {
-					with: {
-						team: true,
-					},
-				},
-				exerciseLogs: {
-					orderBy: (exerciseLogs, { desc }) => [desc(exerciseLogs.createdAt)],
-					limit: 10,
-					with: {
-						exercise: {
-							with: {
-								difficulty: true,
-								categories: {
-									with: {
-										category: true,
-									},
-								},
-								muscleGroups: {
-									with: {
-										muscleGroup: true,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		});
-
-		if (!profile) {
-			throw new TRPCError({
-				code: "NOT_FOUND",
-				message: "User profile not found",
-			});
-		}
-
-		return profile;
-	}),
-
-	// Protected procedure - log exercise and update points
-	logExercise: protectedProcedure
-		.input(
-			z.object({
-				exerciseId: z.string().uuid(),
-				challengeId: z.string().uuid().optional(),
-				quantity: z.number().optional(),
-				unit: z.string().optional(),
-				sets: z.number().optional(),
-				weight: z.number().optional(),
-				duration: z.number().optional(),
-				calories: z.number().optional(),
-				metadata: z.record(z.unknown()).optional(),
-			}),
-		)
+const exerciseRouter = router({
+	log: protectedProcedure
+		.input(logExerciseSchema)
+		.output(exerciseLogSchema)
+		.use(loggerMiddleware)
 		.mutation(async ({ ctx, input }) => {
-			const { userId } = ctx;
-			const {
-				exerciseId,
-				challengeId,
-				quantity,
-				unit,
-				sets,
-				weight,
-				duration,
-				calories,
-				metadata,
-			} = input;
-
 			return await db.transaction(async (tx) => {
-				// Get exercise details for difficulty multiplier
 				const exercise = await tx.query.exerciseCatalog.findFirst({
-					where: eq(exerciseCatalog.id, exerciseId),
+					where: eq(exerciseCatalog.id, input.exerciseId),
 					with: {
 						difficulty: true,
 					},
@@ -136,133 +141,58 @@ export const userRouter = router({
 					throw new TRPCError({
 						code: "NOT_FOUND",
 						message: "Exercise not found",
+						cause: { exerciseId: input.exerciseId },
 					});
 				}
 
-				// Calculate points based on exercise difficulty and other factors
 				const difficultyMultiplier = exercise.difficulty?.id || 1;
-				const basePoints = 10; // Base points per exercise
+				const basePoints = 10;
 				const points = basePoints * difficultyMultiplier;
 
-				// Log the exercise
 				const [exerciseLog] = await tx
 					.insert(exerciseLogs)
 					.values({
-						userId,
-						exerciseId,
-						challengeId,
-						quantity,
-						unit,
-						sets,
-						weight,
-						duration,
-						calories,
+						userId: ctx.userId,
+						exerciseId: input.exerciseId,
+						challengeId: input.challengeId ?? null,
+						quantity: input.quantity ?? null,
+						unit: input.unit ?? null,
+						sets: input.sets ?? null,
+						weight: input.weight ?? null,
+						duration: input.duration ?? null,
+						calories: input.calories ?? null,
 						difficultyMultiplier,
 						points,
-						metadata,
+						metadata: input.metadata ?? null,
 					})
 					.returning();
 
-				// Update user points and check for level up
-				const currentProfile = await tx.query.userProfiles.findFirst({
-					where: eq(userProfiles.userId, userId),
-				});
-
-				if (!currentProfile) {
-					throw new TRPCError({
-						code: "NOT_FOUND",
-						message: "User profile not found",
-					});
-				}
-
-				const newTotalPoints = currentProfile.totalPoints + points;
-				const newCurrentPoints = currentProfile.currentPoints + points;
-
-				// Get next level requirements
-				const nextLevel = await tx.query.levelRequirements.findFirst({
-					where: eq(levelRequirements.level, currentProfile.level + 1),
-				});
-
-				// Check if user leveled up
-				const leveledUp = nextLevel && newTotalPoints >= nextLevel.pointsRequired;
-				const newLevel = leveledUp ? currentProfile.level + 1 : currentProfile.level;
-
-				// Update user profile
-				const [updatedProfile] = await tx
-					.update(userProfiles)
-					.set({
-						totalPoints: newTotalPoints,
-						currentPoints: newCurrentPoints,
-						level: newLevel,
-					})
-					.where(eq(userProfiles.userId, userId))
-					.returning();
-
-				// If user is in a team, update team points
-				const userTeam = await tx.query.teamMembers.findFirst({
-					where: eq(teamMembers.userId, userId),
-					with: {
-						team: true,
-					},
-				});
-
-				if (userTeam) {
-					await tx
-						.update(teams)
-						.set({
-							totalTeamPoints: userTeam.team.totalTeamPoints + points,
-						})
-						.where(eq(teams.id, userTeam.team.id));
-
-					await tx
-						.update(userProfiles)
-						.set({
-							teamPoints: currentProfile.teamPoints + points,
-						})
-						.where(eq(userProfiles.userId, userId));
-				}
+				await updateUserPoints(tx, ctx.userId, points);
 
 				return {
-					exerciseLog,
-					profile: updatedProfile,
-					leveledUp,
-					pointsEarned: points,
+					id: exerciseLog.id,
+					userId: exerciseLog.userId,
+					exerciseId: exerciseLog.exerciseId,
+					points: exerciseLog.points,
+					createdAt: exerciseLog.createdAt ?? new Date(),
 				};
 			});
 		}),
 
-	// Protected procedure - get user's exercise history
-	getExerciseHistory: protectedProcedure
-		.input(
-			z.object({
-				limit: z.number().min(1).max(100).default(10),
-				cursor: z.number().optional(),
-			}),
-		)
+	history: protectedProcedure
+		.input(paginationSchema)
+		.use(loggerMiddleware)
 		.query(async ({ ctx, input }) => {
-			const { userId } = ctx;
 			const { limit, cursor } = input;
 
 			const logs = await db.query.exerciseLogs.findMany({
-				where: eq(exerciseLogs.userId, userId),
+				where: eq(exerciseLogs.userId, ctx.userId),
 				limit: limit + 1,
 				offset: cursor,
 				orderBy: (logs, { desc }) => [desc(logs.createdAt)],
 				with: {
 					exercise: {
-						with: {
-							difficulty: true,
-							categories: {
-								with: {
-									category: true,
-								},
-							},
-							muscleGroups: {
-								with: {
-									muscleGroup: true,
-								},
-							},
-						},
+						with: exerciseIncludes,
 					},
 					challenge: true,
 				},
@@ -279,22 +209,67 @@ export const userRouter = router({
 				nextCursor,
 			};
 		}),
-
-	// Admin procedure - list all users with stats
-	listAll: adminProcedure.query(async () => {
-		const users = await db.query.userProfiles.findMany({
-			orderBy: (userProfiles, { desc }) => [desc(userProfiles.totalPoints)],
-			with: {
-				level: true,
-				badges: true,
-				teamMembers: {
-					with: {
-						team: true,
-					},
-				},
-			},
-		});
-
-		return users;
-	}),
 });
+
+const adminRouter = router({
+	listAll: adminProcedure
+		.use(loggerMiddleware)
+		.query(async () => {
+			return await db.query.userProfiles.findMany({
+				orderBy: (userProfiles, { desc }) => [desc(userProfiles.totalPoints)],
+				with: profileIncludes,
+			});
+		}),
+});
+
+// Helper function for updating user points - optimized with type assertions
+async function updateUserPoints(tx: any, userId: string, points: number) {
+	const currentProfile = await tx.query.userProfiles.findFirst({
+		where: eq(userProfiles.userId, userId),
+		columns: {
+			totalPoints: true,
+			currentPoints: true,
+			level: true,
+		},
+	});
+
+	if (!currentProfile) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "User profile not found",
+			cause: { userId },
+		});
+	}
+
+	const newTotalPoints = currentProfile.totalPoints + points;
+	const newCurrentPoints = currentProfile.currentPoints + points;
+
+	const nextLevel = await tx.query.levelRequirements.findFirst({
+		where: eq(levelRequirements.level, currentProfile.level + 1),
+		columns: {
+			pointsRequired: true,
+		},
+	});
+
+	const leveledUp = nextLevel && newTotalPoints >= nextLevel.pointsRequired;
+	const newLevel = leveledUp ? currentProfile.level + 1 : currentProfile.level;
+
+	await tx
+		.update(userProfiles)
+		.set({
+			totalPoints: newTotalPoints,
+			currentPoints: newCurrentPoints,
+			level: newLevel,
+		})
+		.where(eq(userProfiles.userId, userId));
+}
+
+// Main router with sub-routers
+export const userRouter = router({
+	profile: profileRouter,
+	exercise: exerciseRouter,
+	admin: adminRouter,
+});
+
+// Type export with lazy evaluation
+export type UserRouter = typeof userRouter;
